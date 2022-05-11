@@ -176,6 +176,19 @@ static bool FireOrmQueryWithCallback(AMX *amx, cell *params, COrm::QueryType typ
 		if (callback)
 			callback->Execute();
 
+        //forward OnQueryExecuted(duration_us, const query[], const callback[], result_count, MySQL:handle);
+        Callback_t executed_callback = CCallback::Create(
+            amx,
+            "OnQueryExecuted",
+            "dssdd",
+            result->GetExecutionTime(TimeType::MICROSECONDS),
+            query_str.c_str(),
+            callback_str.c_str(),
+            result->GetResultCount(),
+            handle_id);
+        if (executed_callback)
+            executed_callback->Execute();
+        
 		orm->ResetError();
 	});
 
@@ -653,18 +666,29 @@ static bool SendQueryWithCallback(AMX *amx, cell *params,
 
 	string query_str = amx_GetCppString(amx, params[2]);
 	Query_t query = CQuery::Create(query_str);
-	if (callback != nullptr)
-	{
-		query->OnExecutionFinished([callback](ResultSet_t resultset)
-		{
-			CResultSetManager::Get()->SetActiveResultSet(resultset);
+    query->OnExecutionFinished([callback](ResultSet_t resultset)
+    {
+        CResultSetManager::Get()->SetActiveResultSet(resultset);
 
-			callback->Execute();
-
-			//unset active result(cache) + delete result (done by shared_ptr)
-			CResultSetManager::Get()->SetActiveResultSet(nullptr);
-		});
-	}
+        if (callback != nullptr)
+        {
+            callback->Execute();
+        }
+        //forward OnQueryExecuted(duration_us, const query[], const callback[], result_count, MySQL:handle);
+        Callback_t executed_callback = CCallback::Create(
+            amx,
+            "OnQueryExecuted",
+            "dssdd",
+            result->GetExecutionTime(TimeType::MICROSECONDS),
+            query_str.c_str(),
+            callback_str.c_str(),
+            result->GetResultCount(),
+            handle_id);
+        if (executed_callback)
+            executed_callback->Execute();
+        //unset active result(cache) + delete result (done by shared_ptr)
+        CResultSetManager::Get()->SetActiveResultSet(nullptr);
+    });
 
 	query->OnError(
 		[amx, handle_id, callback_str, query_str](unsigned int errorid,
@@ -868,24 +892,35 @@ AMX_DECLARE_NATIVE(Native::mysql_tquery_file)
 				string query_str = *i;
 				Query_t query = CQuery::Create(query_str);
 
-				if (callback != nullptr)
-				{
-					bool is_last_query = ((i + 1) == queries.end());
-					query->OnExecutionFinished([=](ResultSet_t result)
-					{
-						results->push_back(result);
+                bool is_last_query = ((i + 1) == queries.end());
+                query->OnExecutionFinished([=](ResultSet_t result)
+                {
+                    results->push_back(result);
 
-						if (is_last_query)
-						{
-							CResultSetManager::Get()->SetActiveResultSet(
-								CResultSet::Merge(*results));
+                    if (is_last_query)
+                    {
+                        CResultSetManager::Get()->SetActiveResultSet(
+                            CResultSet::Merge(*results));
 
-							callback->Execute();
-
-							CResultSetManager::Get()->SetActiveResultSet(nullptr);
-						}
-					});
-				}
+                        if (callback != nullptr)
+                        {
+                            callback->Execute();
+                        }
+                        //forward OnQueryExecuted(duration_us, const query[], const callback[], result_count, MySQL:handle);
+                        Callback_t executed_callback = CCallback::Create(
+                            amx,
+                            "OnQueryExecuted",
+                            "dssdd",
+                            result->GetExecutionTime(TimeType::MICROSECONDS),
+                            query_str.c_str(),
+                            callback_str.c_str(),
+                            result->GetResultCount(),
+                            handle_id);
+                        if (executed_callback)
+                            executed_callback->Execute();
+                        CResultSetManager::Get()->SetActiveResultSet(nullptr);
+                    }
+                });
 				query->OnError(std::bind(query_error_func,
 					query_str, std::placeholders::_1, std::placeholders::_2));
 
